@@ -34,5 +34,8 @@
 # Build folders
 *build*/
 
-# CLion
+# IDEs
 .idea/
+cmake-build-*/
+.kdev4/
+*.kdev4
