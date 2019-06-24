@@ -10,21 +10,27 @@ struct data {
   double d;
 };
 
-TEST(freelist, capacity) {
-  FreeList<data, 8000> fl;
-  EXPECT_EQ(999, fl.capacity);
-}
-
 TEST(freelist, sizeof_) {
 
   FreeList<data, 8000> fl;
   EXPECT_EQ(8000, sizeof(fl));
 }
 
+TEST(freelist, empty) {
+  std::vector<data*> indexList;
+  FreeList<data, 800> fl;
+  EXPECT_TRUE(fl.empty());
+  indexList.push_back(fl.push());
+  EXPECT_FALSE(fl.empty());
+  fl.pop(indexList.back());
+  indexList.pop_back();
+  EXPECT_TRUE(fl.empty());
+}
+
 TEST(freelist, full) {
   std::vector<data*> indexList;
   FreeList<data, 16> fl;
-  for (int i = 0; i < fl.capacity; ++i) {
+  for (int i = 0; i < fl.capacity(); ++i) {
     EXPECT_FALSE(fl.full());
     indexList.push_back(fl.push());
     ASSERT_NE(nullptr, indexList.back());
@@ -40,30 +46,59 @@ TEST(freelist, full) {
   EXPECT_FALSE(fl.full());
 }
 
-TEST(freelist, push_fail) {
+TEST(freelist, size) {
+  std::vector<data*> indexList;
+  FreeList<data, 8000> fl;
+
+  for (int i = 0; i < fl.capacity(); ++i) {
+    EXPECT_EQ(i, fl.size());
+    indexList.push_back(fl.push());
+    ASSERT_NE(nullptr, indexList.back());
+  }
+  EXPECT_EQ(fl.capacity(), fl.size());
+}
+
+TEST(freelist, capacity) {
+  FreeList<data, 8000> fl;
+  EXPECT_EQ(999, fl.capacity());
+}
+
+TEST(freelist, clear) {
+ // TODO Check all items have destructors called
+}
+
+TEST(freelist, push) {
   std::vector<data*> indexList;
   FreeList<data, 800> fl;
-  for (int i = 0; i < fl.capacity; ++i) {
+  for (int i = 0; i < fl.capacity(); ++i) {
     indexList.push_back(fl.push());
+    ASSERT_NE(nullptr, indexList.back());
   }
-  EXPECT_EQ(nullptr, fl.push());
+  indexList.push_back(fl.push());
+  EXPECT_EQ(nullptr, indexList.back());
+  indexList.pop_back();
 
   fl.pop(indexList.back());
   indexList.pop_back();
 
   indexList.push_back(fl.push());
+  ASSERT_NE(nullptr, indexList.back());
 }
 
-TEST(freelist, data) {
+TEST(freelist, push_with_args) {
+  // TODO
+}
+
+TEST(freelist, data_integrity) {
   std::vector<data*> indexList;
   FreeList<data, 800> fl;
 
-  for (int i = 0; i < fl.capacity; ++i) {
+  for (int i = 0; i < fl.capacity(); ++i) {
     indexList.push_back(fl.push());
     indexList.back()->d = double(i);
   }
 
-  for (int i = 0; i < fl.capacity; ++i) {
+  for (int i = 0; i < fl.capacity(); ++i) {
     EXPECT_FLOAT_EQ(double(i), indexList[i]->d);
   }
 }
@@ -110,3 +145,5 @@ TEST(freelist, push_and_pop) {
   fl.pop(d3);
 
 }
+
+// TODO Thread test
