@@ -10,10 +10,11 @@
 
 template <typename T>
 struct TypeTraits {
-  static constexpr T zero = 0;
+  static const T zero;
   static void inc(T& t) { ++t; }
 };
-
+template <typename T>
+const T TypeTraits<T>::zero = 0;
 
 
 template<typename T>
@@ -66,9 +67,10 @@ struct complex_data {
 
 template <>
 struct TypeTraits<complex_data> {
-  static constexpr complex_data zero{0.0, 0.0F, 0};
+  static const complex_data zero;
   static void inc(complex_data& t) { t.d += 1.0; t.f += 1.0F; ++t.i; }
 };
+const complex_data TypeTraits<complex_data>::zero{0.0, 0.0F, 0};
 
 bool operator==(complex_data const& l, complex_data const& r)
 {
@@ -79,6 +81,15 @@ bool operator==(complex_data const& l, complex_data const& r)
 }
 
 
+template <>
+template <typename T>
+struct TypeTraits<std::vector<T>> {
+  static const std::vector<T> zero;
+  static void inc(std::vector<T>& t) { t.push_back(T(t.size())); }
+};
+template <typename T>
+const std::vector<T> TypeTraits<std::vector<T>>::zero{};
+
 // Define test types
 
 using FreeListTestTypes = ::testing::Types<
@@ -87,9 +98,8 @@ using FreeListTestTypes = ::testing::Types<
     FreeListType<int8_t, 70000>,
     FreeListType<double, 16>,
     FreeListType<double, 800>,
-    FreeListType<complex_data, sizeof(complex_data) * 100>
-    //FreeListType<std::vector<int>, 1024>
-    >;
+    FreeListType<complex_data, sizeof(complex_data) * 100>,
+    FreeListType<std::vector<int>, sizeof(std::vector<int>) * 100>>;
 
 TYPED_TEST_CASE(FreeListTest, FreeListTestTypes);
 

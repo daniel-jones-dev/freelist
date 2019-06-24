@@ -27,7 +27,8 @@
 template<typename T, uint64_t Size>
 class FreeList {
  public:
-  static_assert(std::is_pod<T>::value, "Stored data type must be POD");
+  static_assert(!std::is_abstract<T>::value,
+                "Stored data type must not be abstract");
   static_assert(Size % sizeof(T) == 0, "Size must be a multiple of sizeof(T)");
 
   /**
@@ -132,6 +133,10 @@ class FreeList {
 
  private:
   union _element {
+    // Empty constructor and destructor - deletion will be handled manually
+    _element() {}
+    ~_element() {}
+
     T data;
     index_type index;
   };
@@ -155,6 +160,10 @@ class FreeList {
   inline index_type _push();
 
   union _data {
+    // Empty constructor and destructor - deletion will be handled manually
+    _data() {}
+    ~_data() {}
+
     _element elements[index_count];
     _overhead overhead;
   } data;
