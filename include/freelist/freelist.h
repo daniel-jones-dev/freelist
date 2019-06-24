@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cassert>
 #include <cstdint>
+#include <limits>
 #include <type_traits>
 
 /**
@@ -16,30 +17,66 @@
  *
  * @tparam T Data type to store.
  * @tparam Size Total number of bytes for this FreeList: sizeof(*this) == Size.
- * @tparam IndexSize Number of bytes to use for indices, default 2
  */
-template<typename T, uint32_t Size, uint8_t IndexSize = 2>
+template<typename T, uint64_t Size>
 class FreeList {
  public:
   static_assert(std::is_pod<T>::value, "Stored data type must be POD");
+  static_assert(Size % sizeof(T) == 0, "Size must be a multiple of sizeof(T)");
 
-  using index_type = uint16_t;
+  /**
+   * Forwarding the stored type.
+   */
   using value_type = T;
-  using byte = uint8_t;
+
+  /**
+   * Type used for storing indexes.
+   * Either uint8_t, uint16_t, uint32_t or uint64_t depending on required size.
+   */
+  using index_type = typename std::conditional<
+      Size <= std::numeric_limits<uint8_t>::max(),
+      uint8_t,
+      typename std::conditional<
+          (Size / 2) <= std::numeric_limits<uint16_t>::max(),
+          uint16_t,
+          typename std::conditional<
+              (Size / 4) <= std::numeric_limits<uint32_t>::max(),
+              uint32_t,
+              uint64_t>::type>::type>::type;
+
+ private:
+  union _element {
+    T data;
+    index_type index;
+  };
+
+  struct _overhead {
+    std::atomic<index_type> next;
+    std::atomic<index_type> free;
+    //std::atomic<index_type> count; // TODO
+  };
+
+ public:
 
   /**
    *
    */
-  static constexpr uint32_t
-      element_size = sizeof(T) > IndexSize ? sizeof(T) : IndexSize;
+  static constexpr uint64_t element_size = sizeof(_element);
+
+  static constexpr index_type index_count = Size / element_size;
+
+  static constexpr index_type element_overhead_count =
+      (sizeof(_overhead) + element_size - 1) / element_size;
 
   /**
    * Static constant defined the maximum capacity of FreeLists of this type.
    */
-  static constexpr index_type capacity = (Size - 2 * IndexSize) / element_size;
+  static constexpr index_type capacity = index_count - element_overhead_count;
 
   inline FreeList();
   inline ~FreeList();
+
+  inline void clear();
 
   inline T* get(index_type index);
   inline T const* get(index_type index) const;
@@ -56,101 +93,96 @@ class FreeList {
   inline bool full() const;
 
  private:
-  union _meta {
-
-    static constexpr index_type buffer_elements =
-        element_size >= (2*IndexSize) ? 1
-                                      : ((2*IndexSize + element_size) / element_size);
-    uint8_t _buffer[buffer_elements * element_size];
-
-    struct _detail {
-      std::atomic<index_type> next;
-      std::atomic<index_type> free;
-    } detail;
-  } meta;
-  byte data[capacity * element_size];
-
+  union _data {
+    _element elements[index_count];
+    _overhead overhead;
+  } data;
 };
 
-template<typename T, uint32_t Size, uint8_t IndexSize>
-constexpr uint16_t FreeList<T, Size, IndexSize>::capacity;
+template<typename T, uint64_t Size>
+constexpr typename FreeList<T, Size>::index_type FreeList<T, Size>::capacity;
 
-template<typename T, uint32_t Size, uint8_t IndexSize>
-FreeList<T, Size, IndexSize>::FreeList() {
-  meta.detail.next = _meta::buffer_elements;
-  meta.detail.free = 0;
+template<typename T, uint64_t Size>
+FreeList<T, Size>::FreeList() {
+  data.overhead.next = element_overhead_count;
+  data.overhead.free = 0;
 }
 
-template<typename T, uint32_t Size, uint8_t IndexSize>
-FreeList<T, Size, IndexSize>::~FreeList() {}
+template<typename T, uint64_t Size>
+FreeList<T, Size>::~FreeList() {}
 
-template<typename T, uint32_t Size, uint8_t IndexSize>
-T const* FreeList<T, Size, IndexSize>::get(index_type index) const {
-  assert(index < capacity);
-  return reinterpret_cast<T const*>(data + (index * element_size));
+template<typename T, uint64_t Size>
+void FreeList<T, Size>::clear() {
+  // TODO
 }
 
-template<typename T, uint32_t Size, uint8_t IndexSize>
-T* FreeList<T, Size, IndexSize>::get(index_type index) {
-  assert(index < capacity);
-  return reinterpret_cast<T*>(data + (index * element_size));
+template<typename T, uint64_t Size>
+T const* FreeList<T, Size>::get(index_type index) const {
+  assert(index < index_count);
+  return &data.elements[index].data;
 }
 
-template<typename T, uint32_t Size, uint8_t IndexSize>
-typename FreeList<T, Size, IndexSize>::index_type
-FreeList<T, Size, IndexSize>::index(T const* item) const {
+template<typename T, uint64_t Size>
+T* FreeList<T, Size>::get(index_type index) {
+  assert(index < index_count);
+  return &data.elements[index].data;
+}
 
-  index_type index = (reinterpret_cast<byte const*>(item)
-      - reinterpret_cast<byte const*>(this)) / element_size;
-  assert(reinterpret_cast<byte const* >(item)
-             >= reinterpret_cast<byte const*>(this));
-  assert((reinterpret_cast<byte const*>(item)
-      - reinterpret_cast<byte const*>(this))
+template<typename T, uint64_t Size>
+typename FreeList<T, Size>::index_type
+FreeList<T, Size>::index(T const* item) const {
+  assert(item);
+  assert(reinterpret_cast<void const* >(item)
+             >= reinterpret_cast<void const*>(this));
+  assert((reinterpret_cast<uint8_t const*>(item)
+      - reinterpret_cast<uint8_t const*>(this))
              % element_size == 0);
-  assert(index < capacity);
+  index_type index = reinterpret_cast<_element const*>(item) - data.elements;
+
+  assert(index < index_count);
   return index;
 
 }
 
-template<typename T, uint32_t Size, uint8_t IndexSize>
-T* FreeList<T, Size, IndexSize>::push() {
+template<typename T, uint64_t Size>
+T* FreeList<T, Size>::push() {
   // Read the free index
-  index_type index = meta.detail.free;
+  index_type index = data.overhead.free;
   // If it is not zero, then there is a previously-freed item
-  if (index != 0) {
+  if (index) {
     // Change free to the data stored at that index
-    meta.detail.free = *reinterpret_cast<index_type*>(data + (index * element_size));
+    data.overhead.free = *reinterpret_cast<index_type*>(get(index));
     // Return the previously freed item
     return get(index);
   } else {
     // No previously-freed items
-    if (meta.detail.next == capacity) {
+    if (data.overhead.next == index_count) {
       // No next items
       return nullptr;
     }
     // Return the next item
-    return get(meta.detail.next++);
+    return get(data.overhead.next++);
   }
 
 }
 
-template<typename T, uint32_t Size, uint8_t IndexSize>
-void FreeList<T, Size, IndexSize>::pop(T* item) {
+template<typename T, uint64_t Size>
+void FreeList<T, Size>::pop(T* item) {
   pop(index(item));
 };
 
-template<typename T, uint32_t Size, uint8_t IndexSize>
-void FreeList<T, Size, IndexSize>::pop(index_type index) {
-  assert(index < capacity);
+template<typename T, uint64_t Size>
+void FreeList<T, Size>::pop(index_type index) {
+  assert(index < index_count);
 
-  index_type old_free = meta.detail.free;
-  meta.detail.free = index;
-  *reinterpret_cast<uint16_t*>(data + (index * element_size)) = old_free;
+  index_type old_free = data.overhead.free;
+  data.overhead.free = index;
+  *reinterpret_cast<index_type*>(get(index)) = old_free;
 }
 
-template<typename T, uint32_t Size, uint8_t IndexSize>
-bool FreeList<T, Size, IndexSize>::full() const {
-  return meta.detail.next >= capacity && meta.detail.free == capacity;
+template<typename T, uint64_t Size>
+bool FreeList<T, Size>::full() const {
+  return data.overhead.next == index_count && data.overhead.free == 0;
 }
 
 #endif //QUADTREE_FREELIST_H

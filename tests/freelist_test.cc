@@ -23,10 +23,15 @@ TEST(freelist, sizeof_) {
 
 TEST(freelist, full) {
   std::vector<data*> indexList;
-  FreeList<data, 10> fl;
+  FreeList<data, 16> fl;
   for (int i = 0; i < fl.capacity; ++i) {
     EXPECT_FALSE(fl.full());
     indexList.push_back(fl.push());
+    ASSERT_NE(nullptr, indexList.back());
+    EXPECT_GE(reinterpret_cast<uint8_t const*>(indexList.back()),
+              reinterpret_cast<uint8_t const*>(&fl));
+    EXPECT_LT(reinterpret_cast<uint8_t const*>(indexList.back()),
+              reinterpret_cast<uint8_t const*>(&fl) + 16);
   }
   EXPECT_TRUE(fl.full());
 
@@ -37,7 +42,7 @@ TEST(freelist, full) {
 
 TEST(freelist, push_fail) {
   std::vector<data*> indexList;
-  FreeList<data, 10> fl;
+  FreeList<data, 800> fl;
   for (int i = 0; i < fl.capacity; ++i) {
     indexList.push_back(fl.push());
   }
@@ -51,7 +56,7 @@ TEST(freelist, push_fail) {
 
 TEST(freelist, data) {
   std::vector<data*> indexList;
-  FreeList<data, 10> fl;
+  FreeList<data, 800> fl;
 
   for (int i = 0; i < fl.capacity; ++i) {
     indexList.push_back(fl.push());
@@ -66,7 +71,7 @@ TEST(freelist, data) {
 TEST(freelist, push_and_pop) {
 
   std::vector<data*> indexList;
-  FreeList<data, 10> fl;
+  FreeList<data, 800> fl;
 
   data* d0 = fl.push();
   d0->d = 0.0;
