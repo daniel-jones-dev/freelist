@@ -6,144 +6,256 @@
 
 #include <gtest/gtest.h>
 
-struct data {
-  double d;
+////////////////////////////////////////////////////////////////////////////////
+
+template <typename T>
+struct TypeTraits {
+  static constexpr T zero = 0;
+  static void inc(T& t) { ++t; }
 };
 
-TEST(freelist, sizeof_) {
 
-  FreeList<data, 8000> fl;
-  EXPECT_EQ(8000, sizeof(fl));
+
+template<typename T>
+struct ValueStore {
+ public:
+  T next() {
+    T result = value;
+    TypeTraits<T>::inc(value);
+    return result;
+  }
+  T value = TypeTraits<T>::zero;
+};
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Set up test fixture for typed tests
+
+template<typename _T, uint64_t Size>
+struct FreeListType {
+  using T = _T;
+  static constexpr uint64_t size = Size;
+};
+
+template<typename _T>
+class FreeListTest : public ::testing::Test {
+ protected:
+
+
+  using this_FreeList = FreeList<typename _T::T, _T::size>;
+  using T = typename _T::T;
+  static constexpr uint64_t Size = _T::size;
+
+  this_FreeList freelist;
+  ValueStore<typename _T::T> value_store;
+};
+
+template<typename T>
+constexpr uint64_t FreeListTest<T>::Size;
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Define types to test with
+
+struct complex_data {
+  double d;
+  float f;
+  uint32_t i;
+  int32_t i2;
+};
+
+template <>
+struct TypeTraits<complex_data> {
+  static constexpr complex_data zero{0.0, 0.0F, 0};
+  static void inc(complex_data& t) { t.d += 1.0; t.f += 1.0F; ++t.i; }
+};
+
+bool operator==(complex_data const& l, complex_data const& r)
+{
+  if (l.d != r.d) return false;
+  if (l.f != r.f) return false;
+  if (l.i != r.i) return false;
+  return true;
 }
 
-TEST(freelist, empty) {
-  std::vector<data*> indexList;
-  FreeList<data, 800> fl;
-  EXPECT_TRUE(fl.empty());
-  indexList.push_back(fl.push());
-  EXPECT_FALSE(fl.empty());
-  fl.pop(indexList.back());
+
+// Define test types
+
+using FreeListTestTypes = ::testing::Types<
+    FreeListType<int8_t, 16>,
+    FreeListType<int8_t, 300>,
+    FreeListType<int8_t, 70000>,
+    FreeListType<double, 16>,
+    FreeListType<double, 800>,
+    FreeListType<complex_data, sizeof(complex_data) * 100>
+    //FreeListType<std::vector<int>, 1024>
+    >;
+
+TYPED_TEST_CASE(FreeListTest, FreeListTestTypes);
+
+////////////////////////////////////////////////////////////////////////////////
+
+TYPED_TEST(FreeListTest, sizeof_) {
+
+  FreeList<typename TestFixture::T, TestFixture::Size> freelist;
+
+  EXPECT_EQ(TestFixture::Size, sizeof(freelist));
+}
+
+TYPED_TEST(FreeListTest, empty) {
+  FreeList<typename TestFixture::T, TestFixture::Size> freelist;
+  std::vector<typename TestFixture::T*> indexList;
+
+  EXPECT_TRUE(this->freelist.empty());
+  indexList.push_back(this->freelist.push());
+  EXPECT_FALSE(this->freelist.empty());
+  this->freelist.pop(indexList.back());
   indexList.pop_back();
-  EXPECT_TRUE(fl.empty());
+  EXPECT_TRUE(this->freelist.empty());
 }
 
-TEST(freelist, full) {
-  std::vector<data*> indexList;
-  FreeList<data, 16> fl;
-  for (int i = 0; i < fl.capacity(); ++i) {
-    EXPECT_FALSE(fl.full());
-    indexList.push_back(fl.push());
+TYPED_TEST(FreeListTest, full) {
+  FreeList<typename TestFixture::T, TestFixture::Size> freelist;
+  std::vector<typename TestFixture::T*> indexList;
+
+  for (int i = 0; i < freelist.capacity(); ++i) {
+    EXPECT_FALSE(freelist.full());
+    indexList.push_back(freelist.push());
     ASSERT_NE(nullptr, indexList.back());
+  }
+  EXPECT_TRUE(freelist.full());
+
+  freelist.pop(indexList.back());
+  indexList.pop_back();
+  EXPECT_FALSE(freelist.full());
+}
+
+TYPED_TEST(FreeListTest, size) {
+  FreeList<typename TestFixture::T, TestFixture::Size> freelist;
+  std::vector<typename TestFixture::T*> indexList;
+
+  for (int i = 0; i < freelist.capacity(); ++i) {
+    EXPECT_EQ(i, freelist.size());
+    indexList.push_back(freelist.push());
+    ASSERT_NE(nullptr, indexList.back());
+  }
+  EXPECT_EQ(freelist.capacity(), freelist.size());
+}
+
+TYPED_TEST(FreeListTest, capacity) {
+  FreeList<typename TestFixture::T, TestFixture::Size> freelist;
+  std::vector<typename TestFixture::T*> indexList;
+
+  EXPECT_GT(TestFixture::Size / sizeof(typename TestFixture::T),
+            freelist.capacity());
+}
+
+TYPED_TEST(FreeListTest, clear) {
+  FreeList<typename TestFixture::T, TestFixture::Size> freelist;
+  std::vector<typename TestFixture::T*> indexList;
+
+  // TODO Check all items have destructors called
+}
+
+TYPED_TEST(FreeListTest, push) {
+  FreeList<typename TestFixture::T, TestFixture::Size> freelist;
+  std::vector<typename TestFixture::T*> indexList;
+
+  for (int i = 0; i < freelist.capacity(); ++i) {
+    indexList.push_back(freelist.push());
+    ASSERT_NE(nullptr, indexList.back());
+
+    // Check the pointers are within range
     EXPECT_GE(reinterpret_cast<uint8_t const*>(indexList.back()),
-              reinterpret_cast<uint8_t const*>(&fl));
+              reinterpret_cast<uint8_t const*>(&freelist));
     EXPECT_LT(reinterpret_cast<uint8_t const*>(indexList.back()),
-              reinterpret_cast<uint8_t const*>(&fl) + 16);
+              reinterpret_cast<uint8_t const*>(&freelist) + TestFixture::Size);
   }
-  EXPECT_TRUE(fl.full());
-
-  fl.pop(indexList.back());
-  indexList.pop_back();
-  EXPECT_FALSE(fl.full());
-}
-
-TEST(freelist, size) {
-  std::vector<data*> indexList;
-  FreeList<data, 8000> fl;
-
-  for (int i = 0; i < fl.capacity(); ++i) {
-    EXPECT_EQ(i, fl.size());
-    indexList.push_back(fl.push());
-    ASSERT_NE(nullptr, indexList.back());
-  }
-  EXPECT_EQ(fl.capacity(), fl.size());
-}
-
-TEST(freelist, capacity) {
-  FreeList<data, 8000> fl;
-  EXPECT_EQ(999, fl.capacity());
-}
-
-TEST(freelist, clear) {
- // TODO Check all items have destructors called
-}
-
-TEST(freelist, push) {
-  std::vector<data*> indexList;
-  FreeList<data, 800> fl;
-  for (int i = 0; i < fl.capacity(); ++i) {
-    indexList.push_back(fl.push());
-    ASSERT_NE(nullptr, indexList.back());
-  }
-  indexList.push_back(fl.push());
+  indexList.push_back(freelist.push());
   EXPECT_EQ(nullptr, indexList.back());
   indexList.pop_back();
 
-  fl.pop(indexList.back());
+  freelist.pop(indexList.back());
   indexList.pop_back();
 
-  indexList.push_back(fl.push());
+  indexList.push_back(freelist.push());
   ASSERT_NE(nullptr, indexList.back());
 }
 
-TEST(freelist, push_with_args) {
+TYPED_TEST(FreeListTest, push_with_args) {
+  FreeList<typename TestFixture::T, TestFixture::Size> freelist;
+  std::vector<typename TestFixture::T*> indexList;
   // TODO
 }
 
-TEST(freelist, data_integrity) {
-  std::vector<data*> indexList;
-  FreeList<data, 800> fl;
+TYPED_TEST(FreeListTest, data_integrity) {
+  FreeList<typename TestFixture::T, TestFixture::Size> freelist;
+  std::vector<typename TestFixture::T*> indexList;
+  std::vector<typename TestFixture::T> valueList;
 
-  for (int i = 0; i < fl.capacity(); ++i) {
-    indexList.push_back(fl.push());
-    indexList.back()->d = double(i);
+  for (int i = 0; i < freelist.capacity(); ++i) {
+    indexList.push_back(freelist.push());
+    valueList.push_back(this->value_store.next());
+    *indexList.back() = valueList.back();
   }
 
-  for (int i = 0; i < fl.capacity(); ++i) {
-    EXPECT_FLOAT_EQ(double(i), indexList[i]->d);
+  for (int i = 0; i < freelist.capacity(); ++i) {
+    EXPECT_EQ(valueList[i], *indexList[i]);
   }
 }
 
-TEST(freelist, push_and_pop) {
+TYPED_TEST(FreeListTest, push_and_pop) {
 
-  std::vector<data*> indexList;
-  FreeList<data, 800> fl;
+  FreeList<typename TestFixture::T, TestFixture::Size> freelist;
+  std::vector<typename TestFixture::T> valueList;
 
-  data* d0 = fl.push();
-  d0->d = 0.0;
-  data* d1 = fl.push();
-  d1->d = 1.0;
-  data* d2 = fl.push();
-  d2->d = 2.0;
-  data* dm1 = fl.push();
-  dm1->d = -1.0;
-  data* dm2 = fl.push();
-  dm2->d = -2.0;
-  data* dm3 = fl.push();
-  dm3->d = -3.0;
+  // TODO change test to cover lists with smaller capacity
 
-  fl.pop(dm1);
-  fl.pop(dm2);
+  if (freelist.capacity() >= 6) {
+    typename TestFixture::T* d0 = freelist.push();
+    valueList.push_back(this->value_store.next());
+    *d0 = valueList.back();
+    typename TestFixture::T* d1 = freelist.push();
+    valueList.push_back(this->value_store.next());
+    *d1 = valueList.back();
+    typename TestFixture::T* d2 = freelist.push();
+    valueList.push_back(this->value_store.next());
+    *d2 = valueList.back();
+    typename TestFixture::T* dm1 = freelist.push();
+    *dm1 = this->value_store.next();
+    typename TestFixture::T* dm2 = freelist.push();
+    *dm2 = this->value_store.next();
+    typename TestFixture::T* dm3 = freelist.push();
+    *dm3 = this->value_store.next();
 
-  data* d3 = fl.push();
-  d3->d = 3.0;
+    freelist.pop(dm1);
+    freelist.pop(dm2);
 
-  fl.pop(dm3);
+    typename TestFixture::T* d3 = freelist.push();
+    valueList.push_back(this->value_store.next());
+    *d3 = valueList.back();
 
-  data* dm4 = fl.push();
-  dm4->d = -4.0;
+    freelist.pop(dm3);
 
-  fl.pop(dm4);
+    typename TestFixture::T* dm4 = freelist.push();
+    *dm3 = this->value_store.next();
 
-  EXPECT_EQ(0.0, d0->d);
-  EXPECT_EQ(1.0, d1->d);
-  EXPECT_EQ(2.0, d2->d);
-  EXPECT_EQ(3.0, d3->d);
+    freelist.pop(dm4);
 
-  fl.pop(d0);
-  fl.pop(d1);
-  fl.pop(d2);
-  fl.pop(d3);
+    EXPECT_EQ(valueList[0], *d0);
+    EXPECT_EQ(valueList[1], *d1);
+    EXPECT_EQ(valueList[2], *d2);
+    EXPECT_EQ(valueList[3], *d3);
 
+    freelist.pop(d0);
+    freelist.pop(d1);
+    freelist.pop(d2);
+    freelist.pop(d3);
+  }
 }
 
 // TODO Thread test
+
+// TODO Check if virtual classes without derived data members can be stored
+
+

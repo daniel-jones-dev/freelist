@@ -12,7 +12,7 @@
 #include <type_traits>
 
 /**
- * FreeList allows random allocation and deletion of items of a fixed size,
+ * FreeList allows random allocation and deletion of items of a fixed type,
  * without the need for dynamic memory allocation.
  *
  * FreeList is defined by the type to be stored and the number of bytes that
@@ -56,7 +56,7 @@ class FreeList {
   inline FreeList();
 
   /**
-   * Destructor, calls delete on all active items.
+   * Destructor, calls delete on all existing items.
    */
   inline ~FreeList();
 
@@ -85,7 +85,7 @@ class FreeList {
   inline static index_type capacity();
 
   /**
-   * Removes all items from the list, deleting each.
+   * Removes all items from the list, calling destructor for each.
    */
   inline void clear();
 
