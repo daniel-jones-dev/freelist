@@ -1,3 +1,7 @@
+#
+# Copyright 2019 Daniel Jones
+#
+
 include(GoogleTest)
 
 enable_testing()

@@ -1,4 +1,6 @@
 //
+// Copyright 2019 Daniel Jones
+//
 // Created by Daniel Jones on 23.06.19.
 //
 

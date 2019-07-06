@@ -1,3 +1,7 @@
+#
+# Copyright 2019 Daniel Jones
+#
+
 cmake_minimum_required(VERSION 3.10)
 project(freelist)
 
