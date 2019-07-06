@@ -6,7 +6,7 @@ include(GoogleTest)
 
 enable_testing()
 
-add_executable(test_freelist freelist_test.cc)
+add_executable(test_freelist freelist_test.cc freelist_destructor_test.cc)
 target_link_libraries(test_freelist freelist gtest gtest_main pthread)
 
 gtest_add_tests(

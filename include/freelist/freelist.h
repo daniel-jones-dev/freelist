@@ -4,8 +4,8 @@
 // Created by Daniel Jones on 23.06.19.
 //
 
-#ifndef QUADTREE_FREELIST_H
-#define QUADTREE_FREELIST_H
+#ifndef INCLUDE_FREELIST_FREELIST_H_
+#define INCLUDE_FREELIST_FREELIST_H_
 
 #include <atomic>
 #include <cassert>
@@ -13,12 +13,14 @@
 #include <limits>
 #include <type_traits>
 
+namespace freelist {
+
 /**
  * FreeList allows random allocation and deletion of items of a fixed type,
  * without the need for dynamic memory allocation.
  *
  * FreeList is defined by the type to be stored and the number of bytes that
- * the freelist should occupy.
+ * the FreeList should occupy.
  *
  * FreeList supports empty constructors, constructors with arguments, and
  * destructors.
@@ -26,8 +28,8 @@
  * @tparam T Data type to store.
  * @tparam Size Total number of bytes for this FreeList: sizeof(*this) == Size.
  */
-template<typename T, uint64_t Size>
-class freelist {
+template <typename T, uint64_t Size>
+class FreeList {
  public:
   static_assert(!std::is_abstract<T>::value,
                 "Stored data type must not be abstract");
@@ -39,45 +41,42 @@ class freelist {
   using value_type = T;
 
   /**
-   * Type used for storing indexes.
-   * Either uint8_t, uint16_t, uint32_t or uint64_t depending on required size.
+   * Type used for storing indexes. Set to an unsigned integer large enough to
+   * store all indexes.
    */
   using index_type = typename std::conditional<
-      Size <= std::numeric_limits<uint8_t>::max(),
-      uint8_t,
+      Size <= std::numeric_limits<uint8_t>::max(), uint8_t,
       typename std::conditional<
-          (Size / 2) <= std::numeric_limits<uint16_t>::max(),
-          uint16_t,
-          typename std::conditional<
-              (Size / 4) <= std::numeric_limits<uint32_t>::max(),
-              uint32_t,
-              uint64_t>::type>::type>::type;
+          (Size / 2) <= std::numeric_limits<uint16_t>::max(), uint16_t,
+          typename std::conditional<(Size / 4) <=
+                                        std::numeric_limits<uint32_t>::max(),
+                                    uint32_t, uint64_t>::type>::type>::type;
 
   /**
-   * Construct an empty freelist.
+   * Construct an empty FreeList.
    */
-  inline freelist();
+  inline FreeList();
 
   /**
    * Destructor, calls delete on all existing items.
    */
-  inline ~freelist();
+  inline ~FreeList();
 
   /**
-   * Check if the freelist is empty.
-   * @return True if the freelist contains no items.
+   * Check if the FreeList is empty.
+   * @return True if the FreeList contains no items.
    */
   inline bool empty() const;
 
   /**
-   * Check if the freelist is full.
-   * @return True if the freelist is full.
+   * Check if the FreeList is full.
+   * @return True if the FreeList is full.
    */
   inline bool full() const;
 
   /**
-   * Check the number of active items in the freelist.
-   * @return Number of active items in the freelist.
+   * Check the number of active items in the FreeList.
+   * @return Number of active items in the FreeList.
    */
   inline index_type size() const;
 
@@ -93,26 +92,26 @@ class freelist {
   inline void clear();
 
   /**
-   * Allocates a new item in the freelist, and calls empty constructor.
+   * Allocates a new item in the FreeList, and calls empty constructor.
    * @return Pointer to new item, or nullptr if full.
    */
   inline T* push();
 
   /**
-   * Allocates a new item in the freelist, and calls non-empty constructor.
+   * Allocates a new item in the FreeList, and calls non-empty constructor.
    * @return Pointer to new item, or nullptr if full.
    */
-  template<typename... Args>
+  template <typename... Args>
   inline T* push(Args... args);
 
   /**
-   * Deletes an item from the freelist, and calls destructor.
+   * Deletes an item from the FreeList, and calls destructor.
    * @param item Pointer to item to delete.
    */
   inline void pop(T* item);
 
   /**
-   * Creates new item in the freelist, does not call constructor.
+   * Creates new item in the FreeList, does not call constructor.
    * @return Index of new item, or 0 if full.
    */
   inline index_type push_index();
@@ -168,9 +167,7 @@ class freelist {
       (sizeof(_overhead) + element_size - 1) / element_size;
 
   static_assert(index_count > element_overhead_count,
-                "freelist is too small to contain elements");
-
-
+                "FreeList is too small to contain elements");
 
   union _data {
     // Empty constructor and destructor - deletion will be handled manually
@@ -182,41 +179,40 @@ class freelist {
   } data;
 };
 
-template<typename T, uint64_t Size>
-freelist<T, Size>::freelist() {
+template <typename T, uint64_t Size>
+FreeList<T, Size>::FreeList() {
   data.overhead.free = 0;
   data.overhead.count = 0;
   data.overhead.next = element_overhead_count;
 }
 
-template<typename T, uint64_t Size>
-freelist<T, Size>::~freelist() {
+template <typename T, uint64_t Size>
+FreeList<T, Size>::~FreeList() {
   clear();
 }
 
-template<typename T, uint64_t Size>
-bool freelist<T, Size>::empty() const {
+template <typename T, uint64_t Size>
+bool FreeList<T, Size>::empty() const {
   return data.overhead.count.load() == 0;
 }
 
-template<typename T, uint64_t Size>
-bool freelist<T, Size>::full() const {
+template <typename T, uint64_t Size>
+bool FreeList<T, Size>::full() const {
   return data.overhead.next == index_count && data.overhead.free == 0;
 }
 
-template<typename T, uint64_t Size>
-typename freelist<T, Size>::index_type freelist<T, Size>::size() const {
+template <typename T, uint64_t Size>
+typename FreeList<T, Size>::index_type FreeList<T, Size>::size() const {
   return data.overhead.count.load();
 }
 
-template<typename T, uint64_t Size>
-typename freelist<T, Size>::index_type freelist<T, Size>::capacity() {
+template <typename T, uint64_t Size>
+typename FreeList<T, Size>::index_type FreeList<T, Size>::capacity() {
   return index_count - element_overhead_count;
 }
 
-template<typename T, uint64_t Size>
-void freelist<T, Size>::clear() {
-
+template <typename T, uint64_t Size>
+void FreeList<T, Size>::clear() {
   // Traverse the free list to find already-freed items
   bool free[index_count];
   for (index_type i = element_overhead_count; i < index_count; ++i) {
@@ -243,31 +239,31 @@ void freelist<T, Size>::clear() {
   data.overhead.next = element_overhead_count;
 }
 
-template<typename T, uint64_t Size>
-T* freelist<T, Size>::push() {
+template <typename T, uint64_t Size>
+T* FreeList<T, Size>::push() {
   index_type index = push_index();
   if (!index) {
     return nullptr;
   }
 
   // placement-new the item
-  return new(get(index)) T();
+  return new (get(index)) T();
 }
 
-template<typename T, uint64_t Size>
-template<typename... Args>
-T* freelist<T, Size>::push(Args... args) {
+template <typename T, uint64_t Size>
+template <typename... Args>
+T* FreeList<T, Size>::push(Args... args) {
   index_type index = push_index();
   if (!index) {
     return nullptr;
   }
 
   // placement-new the item
-  return new(get(index)) T(args...);
+  return new (get(index)) T(args...);
 }
 
-template<typename T, uint64_t Size>
-typename freelist<T, Size>::index_type freelist<T, Size>::push_index() {
+template <typename T, uint64_t Size>
+typename FreeList<T, Size>::index_type FreeList<T, Size>::push_index() {
   // Read the free index
   index_type index = data.overhead.free;
   // If it is not zero, then there is a previously-freed item
@@ -291,8 +287,8 @@ typename freelist<T, Size>::index_type freelist<T, Size>::push_index() {
   }
 }
 
-template<typename T, uint64_t Size>
-void freelist<T, Size>::pop(T* item) {
+template <typename T, uint64_t Size>
+void FreeList<T, Size>::pop(T* item) {
   assert(item);
 
   // placement-delete the item
@@ -300,8 +296,8 @@ void freelist<T, Size>::pop(T* item) {
   pop_index(index(item));
 };
 
-template<typename T, uint64_t Size>
-void freelist<T, Size>::pop_index(index_type index) {
+template <typename T, uint64_t Size>
+void FreeList<T, Size>::pop_index(index_type index) {
   assert(index >= element_overhead_count);
   assert(index < index_count);
 
@@ -311,33 +307,36 @@ void freelist<T, Size>::pop_index(index_type index) {
   --data.overhead.count;
 }
 
-template<typename T, uint64_t Size>
-T const* freelist<T, Size>::get(index_type index) const {
+template <typename T, uint64_t Size>
+T const* FreeList<T, Size>::get(index_type index) const {
   assert(index >= element_overhead_count);
   assert(index < index_count);
   return &data.elements[index].data;
 }
 
-template<typename T, uint64_t Size>
-T* freelist<T, Size>::get(index_type index) {
+template <typename T, uint64_t Size>
+T* FreeList<T, Size>::get(index_type index) {
   assert(index >= element_overhead_count);
   assert(index < index_count);
   return &data.elements[index].data;
 }
 
-template<typename T, uint64_t Size>
-typename freelist<T, Size>::index_type
-freelist<T, Size>::index(T const* item) const {
+template <typename T, uint64_t Size>
+typename FreeList<T, Size>::index_type FreeList<T, Size>::index(
+    T const* item) const {
   assert(item);
-  assert(reinterpret_cast<void const* >(item)
-             >= reinterpret_cast<void const*>(this));
-  assert((reinterpret_cast<uint8_t const*>(item)
-      - reinterpret_cast<uint8_t const*>(this))
-             % element_size == 0);
+  assert(reinterpret_cast<void const*>(item) >=
+         reinterpret_cast<void const*>(this));
+  assert((reinterpret_cast<uint8_t const*>(item) -
+          reinterpret_cast<uint8_t const*>(this)) %
+             element_size ==
+         0);
   index_type index = reinterpret_cast<_element const*>(item) - data.elements;
 
   assert(index < index_count);
   return index;
 }
 
-#endif //QUADTREE_FREELIST_H
+}  // namespace freelist
+
+#endif  // INCLUDE_FREELIST_FREELIST_H_
