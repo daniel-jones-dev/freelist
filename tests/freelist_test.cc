@@ -162,7 +162,6 @@ TYPED_TEST(FreeListTest, alloc) {
 
   for (int i = 0; i < this->fl.capacity(); ++i) {
     indexList.push_back(this->fl.alloc());
-    ASSERT_NE(nullptr, indexList.back());
 
     // Check the pointers are within range
     EXPECT_GE(reinterpret_cast<uint8_t const*>(indexList.back()),

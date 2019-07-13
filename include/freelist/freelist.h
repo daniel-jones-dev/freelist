@@ -95,7 +95,12 @@ class FreeList {
    * Get the maximum number of items that can be stored.
    * @return Maximum number of stored items.
    */
-  inline static index_type capacity() noexcept;
+  inline static index_type max_size() noexcept;
+
+  /**
+   * Synonym for max_size()
+   */
+  inline static index_type capacity() noexcept { return max_size(); }
 
   /**
    * Removes all items from the list, calling destructor for each.
@@ -161,13 +166,13 @@ class FreeList {
    * Creates new item in the FreeList, does not call constructor.
    * @return Index of new item, or 0 if full.
    */
-  inline index_type push_index();
+  inline index_type push_index() noexcept;
 
   /**
    * Removes item at specified index, does not call destructor.
    * @param index Index of item to remove.
    */
-  inline void pop_index(index_type index);
+  inline void pop_index(index_type index) noexcept;
 
   /**
    * Get the index of the specified item.
@@ -253,7 +258,7 @@ bool FreeList<T, Size>::empty() const noexcept {
 
 template <typename T, uint64_t Size>
 bool FreeList<T, Size>::full() const noexcept {
-  return data.overhead.next == kIndexCount && data.overhead.free == 0;
+  return data.overhead.count.load() >= max_size();
 }
 
 template <typename T, uint64_t Size>
@@ -263,13 +268,13 @@ typename FreeList<T, Size>::index_type FreeList<T, Size>::size() const
 }
 
 template <typename T, uint64_t Size>
-typename FreeList<T, Size>::index_type FreeList<T, Size>::capacity() noexcept {
+typename FreeList<T, Size>::index_type FreeList<T, Size>::max_size() noexcept {
   return kIndexCount - kElementOverheadCount;
 }
 
 template <typename T, uint64_t Size>
 void FreeList<T, Size>::clear() noexcept {
-  // TODO(dj) This could be improved by sorting the free-linked-list
+  // TODO(dj): This could be improved by merge-sorting the free-linked-list
 
   // Traverse the free list to find already-freed items
   bool itemIsFree[kIndexCount];
@@ -329,28 +334,37 @@ std::shared_ptr<T> FreeList<T, Size>::make_shared(Args... args) {
 }
 
 template <typename T, uint64_t Size>
-typename FreeList<T, Size>::index_type FreeList<T, Size>::push_index() {
+typename FreeList<T, Size>::index_type
+FreeList<T, Size>::push_index() noexcept {
   // Read the free index
-  index_type index = data.overhead.free;
-  // If it is not zero, then there is a previously-freed item
-  if (index) {
-    // Change free to the data stored at that index
-    data.overhead.free = *reinterpret_cast<index_type*>(get(index));
-    ++data.overhead.count;
+  index_type freeIndex = data.overhead.free.load(std::memory_order_acquire);
 
-    // Return the previously freed item
-    return index;
-  } else {
-    // No previously-freed items
-    if (data.overhead.next == kIndexCount) {
-      // No next items
-      return 0;
+  // While free is not zero, then there is a previously-freed item
+  while (freeIndex) {
+    // Read the index stored at that element
+    index_type nextFreeIndex = *reinterpret_cast<index_type*>(get(freeIndex));
+
+    // TODO(dj): Suffers from the ABA problem
+    if (data.overhead.free.compare_exchange_strong(freeIndex, nextFreeIndex,
+                                                   std::memory_order_release,
+                                                   std::memory_order_acquire)) {
+      // Return the previously freed item
+      ++data.overhead.count;
+      return freeIndex;
     }
-    ++data.overhead.count;
-
-    // Return the next item
-    return data.overhead.next++;
   }
+  // No previously-freed items
+
+  // Atomically get the next index, then increment it
+  const index_type next = data.overhead.next++;
+  if (next >= kIndexCount) {
+    // No next items
+    --data.overhead.next;  // Undo the increment
+    return 0;
+  }
+
+  ++data.overhead.count;
+  return next;
 }
 
 template <typename T, uint64_t Size>
@@ -363,13 +377,22 @@ void FreeList<T, Size>::free(T* item) noexcept {
 };
 
 template <typename T, uint64_t Size>
-void FreeList<T, Size>::pop_index(index_type index) {
+void FreeList<T, Size>::pop_index(const index_type index) noexcept {
   assert(index >= kElementOverheadCount);
   assert(index < kIndexCount);
 
-  index_type old_free = data.overhead.free;
-  data.overhead.free = index;
-  *reinterpret_cast<index_type*>(get(index)) = old_free;
+  // We need to atomically:
+  // - read the current value of the free index
+  // - set the newly-freed-element to contain that free index
+  // - change the free index to point to the newly-freed-element
+  index_type& freedElement = data.elements[index].index;
+
+  index_type freeIndex = data.overhead.free.load();
+  do {
+    freedElement = freeIndex;
+  } while (data.overhead.free.compare_exchange_strong(
+      freeIndex, index));
+
   --data.overhead.count;
 }
 
