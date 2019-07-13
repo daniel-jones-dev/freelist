@@ -45,10 +45,11 @@ class FreeListThreadTest : public ::testing::Test {
 ////////////////////////////////////////////////////////////////////////////////
 
 std::mutex printMutex;
-#define STREAM(ostream, msg) {                                                 \
-  std::lock_guard<std::mutex> lock(printMutex);                                \
-  ostream << msg;                                                              \
-}
+#define STREAM(ostream, msg)                      \
+  {                                               \
+    std::lock_guard<std::mutex> lock(printMutex); \
+    ostream << msg;                               \
+  }
 
 bool threadFunc(FreeListType& fl, uint64_t threadNum, uint64_t doubleCount) {
   bool result = false;
@@ -73,7 +74,7 @@ bool threadFunc(FreeListType& fl, uint64_t threadNum, uint64_t doubleCount) {
         // Note: STREAM() introduces a mutex, which might affect the test result
         // however, at that point the test has failed in any case.
         STREAM(std::cout, "Item " << i << " of thread " << threadNum
-                  << " was corrupted" << std::endl);
+                                  << " was corrupted" << std::endl);
         result = true;
       }
       vec[i].reset();
