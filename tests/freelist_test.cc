@@ -14,7 +14,7 @@
 
 // TODO Check if virtual classes without derived data members can be stored
 
-// TODO push() with args
+// TODO alloc() with args
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -119,9 +119,9 @@ TYPED_TEST(FreeListTest, empty) {
   std::vector<typename TestFixture::T*> indexList;
 
   EXPECT_TRUE(this->fl.empty());
-  indexList.push_back(this->fl.push());
+  indexList.push_back(this->fl.alloc());
   EXPECT_FALSE(this->fl.empty());
-  this->fl.pop(indexList.back());
+  this->fl.free(indexList.back());
   indexList.pop_back();
   EXPECT_TRUE(this->fl.empty());
 }
@@ -131,12 +131,12 @@ TYPED_TEST(FreeListTest, full) {
 
   for (int i = 0; i < this->fl.capacity(); ++i) {
     EXPECT_FALSE(this->fl.full());
-    indexList.push_back(this->fl.push());
+    indexList.push_back(this->fl.alloc());
     ASSERT_NE(nullptr, indexList.back());
   }
   EXPECT_TRUE(this->fl.full());
 
-  this->fl.pop(indexList.back());
+  this->fl.free(indexList.back());
   indexList.pop_back();
   EXPECT_FALSE(this->fl.full());
 }
@@ -146,7 +146,7 @@ TYPED_TEST(FreeListTest, size) {
 
   for (int i = 0; i < this->fl.capacity(); ++i) {
     EXPECT_EQ(i, this->fl.size());
-    indexList.push_back(this->fl.push());
+    indexList.push_back(this->fl.alloc());
     ASSERT_NE(nullptr, indexList.back());
   }
   EXPECT_EQ(this->fl.capacity(), this->fl.size());
@@ -163,7 +163,7 @@ TYPED_TEST(FreeListTest, push) {
   std::vector<typename TestFixture::T*> indexList;
 
   for (int i = 0; i < this->fl.capacity(); ++i) {
-    indexList.push_back(this->fl.push());
+    indexList.push_back(this->fl.alloc());
     ASSERT_NE(nullptr, indexList.back());
 
     // Check the pointers are within range
@@ -172,14 +172,14 @@ TYPED_TEST(FreeListTest, push) {
     EXPECT_LT(reinterpret_cast<uint8_t const*>(indexList.back()),
               reinterpret_cast<uint8_t const*>(&this->fl) + TestFixture::Size);
   }
-  indexList.push_back(this->fl.push());
+  indexList.push_back(this->fl.alloc());
   EXPECT_EQ(nullptr, indexList.back());
   indexList.pop_back();
 
-  this->fl.pop(indexList.back());
+  this->fl.free(indexList.back());
   indexList.pop_back();
 
-  indexList.push_back(this->fl.push());
+  indexList.push_back(this->fl.alloc());
   ASSERT_NE(nullptr, indexList.back());
 }
 
@@ -188,7 +188,7 @@ TYPED_TEST(FreeListTest, data_integrity) {
   std::vector<typename TestFixture::T> valueList;
 
   for (int i = 0; i < this->fl.capacity(); ++i) {
-    indexList.push_back(this->fl.push());
+    indexList.push_back(this->fl.alloc());
     valueList.push_back(this->value_store.next());
     *indexList.back() = valueList.back();
   }
@@ -204,44 +204,44 @@ TYPED_TEST(FreeListTest, push_and_pop) {
   // TODO change test to cover lists with smaller capacity
 
   if (this->fl.capacity() >= 6) {
-    typename TestFixture::T* d0 = this->fl.push();
+    typename TestFixture::T* d0 = this->fl.alloc();
     valueList.push_back(this->value_store.next());
     *d0 = valueList.back();
-    typename TestFixture::T* d1 = this->fl.push();
+    typename TestFixture::T* d1 = this->fl.alloc();
     valueList.push_back(this->value_store.next());
     *d1 = valueList.back();
-    typename TestFixture::T* d2 = this->fl.push();
+    typename TestFixture::T* d2 = this->fl.alloc();
     valueList.push_back(this->value_store.next());
     *d2 = valueList.back();
-    typename TestFixture::T* dm1 = this->fl.push();
+    typename TestFixture::T* dm1 = this->fl.alloc();
     *dm1 = this->value_store.next();
-    typename TestFixture::T* dm2 = this->fl.push();
+    typename TestFixture::T* dm2 = this->fl.alloc();
     *dm2 = this->value_store.next();
-    typename TestFixture::T* dm3 = this->fl.push();
+    typename TestFixture::T* dm3 = this->fl.alloc();
     *dm3 = this->value_store.next();
 
-    this->fl.pop(dm1);
-    this->fl.pop(dm2);
+    this->fl.free(dm1);
+    this->fl.free(dm2);
 
-    typename TestFixture::T* d3 = this->fl.push();
+    typename TestFixture::T* d3 = this->fl.alloc();
     valueList.push_back(this->value_store.next());
     *d3 = valueList.back();
 
-    this->fl.pop(dm3);
+    this->fl.free(dm3);
 
-    typename TestFixture::T* dm4 = this->fl.push();
+    typename TestFixture::T* dm4 = this->fl.alloc();
     *dm3 = this->value_store.next();
 
-    this->fl.pop(dm4);
+    this->fl.free(dm4);
 
     EXPECT_EQ(valueList[0], *d0);
     EXPECT_EQ(valueList[1], *d1);
     EXPECT_EQ(valueList[2], *d2);
     EXPECT_EQ(valueList[3], *d3);
 
-    this->fl.pop(d0);
-    this->fl.pop(d1);
-    this->fl.pop(d2);
-    this->fl.pop(d3);
+    this->fl.free(d0);
+    this->fl.free(d1);
+    this->fl.free(d2);
+    this->fl.free(d3);
   }
 }

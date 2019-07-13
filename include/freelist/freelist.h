@@ -92,23 +92,30 @@ class FreeList {
   inline void clear();
 
   /**
-   * Allocates a new item in the FreeList, and calls empty constructor.
-   * @return Pointer to new item, or nullptr if full.
-   */
-  inline T* push();
-
-  /**
-   * Allocates a new item in the FreeList, and calls non-empty constructor.
+   * Allocates a new item in the FreeList, and calls constructor.
+   * @tparam Args Type of arguments for item constructor.
+   * @param args Arguments to provide to item constructor.
    * @return Pointer to new item, or nullptr if full.
    */
   template <typename... Args>
-  inline T* push(Args... args);
+  inline T* alloc(Args... args);
+
+  /**
+   * Synonym for alloc().
+   */
+  template <typename... Args>
+  inline T* push(Args... args) { return alloc(args...); }
 
   /**
    * Deletes an item from the FreeList, and calls destructor.
    * @param item Pointer to item to delete.
    */
-  inline void pop(T* item);
+  inline void free(T* item);
+
+  /**
+   * Synonym for free().
+   */
+  inline void pop(T* item) { free(item); }
 
   /**
    * Creates new item in the FreeList, does not call constructor.
@@ -240,19 +247,8 @@ void FreeList<T, Size>::clear() {
 }
 
 template <typename T, uint64_t Size>
-T* FreeList<T, Size>::push() {
-  index_type index = push_index();
-  if (!index) {
-    return nullptr;
-  }
-
-  // placement-new the item
-  return new (get(index)) T();
-}
-
-template <typename T, uint64_t Size>
 template <typename... Args>
-T* FreeList<T, Size>::push(Args... args) {
+T* FreeList<T, Size>::alloc(Args... args) {
   index_type index = push_index();
   if (!index) {
     return nullptr;
@@ -288,7 +284,7 @@ typename FreeList<T, Size>::index_type FreeList<T, Size>::push_index() {
 }
 
 template <typename T, uint64_t Size>
-void FreeList<T, Size>::pop(T* item) {
+void FreeList<T, Size>::free(T* item) {
   assert(item);
 
   // placement-delete the item
