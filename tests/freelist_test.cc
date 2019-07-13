@@ -6,36 +6,16 @@
 
 #include <freelist/freelist.h>
 
+#include <algorithm>
 #include <map>
 
 #include <gtest/gtest.h>
 
-// TODO(dj) Thread-safety test
+#include "test_values.h"
 
 // TODO(dj) Check if virtual classes without derived data members can be stored
 
 // TODO(dj) alloc() with args
-
-////////////////////////////////////////////////////////////////////////////////
-
-template <typename T>
-struct TypeTraits {
-  static const T zero;
-  static void inc(T& t) { ++t; }
-};
-template <typename T>
-const T TypeTraits<T>::zero = 0;
-
-template <typename T>
-struct ValueStore {
- public:
-  T next() {
-    T result = value;
-    TypeTraits<T>::inc(value);
-    return result;
-  }
-  T value = TypeTraits<T>::zero;
-};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Set up test fixture for typed tests
@@ -55,6 +35,15 @@ class FreeListTest : public ::testing::Test {
 
   this_FreeList fl;
   ValueStore<typename _T::T> value_store;
+
+  void checkPointer(T* item) {
+    EXPECT_FALSE(item == nullptr);
+
+    EXPECT_LE(reinterpret_cast<uint8_t const*>(&fl),
+              reinterpret_cast<uint8_t const*>(item));
+    EXPECT_GT(reinterpret_cast<uint8_t const*>(&fl) + Size,
+              reinterpret_cast<uint8_t const*>(item));
+  }
 };
 
 template <typename T>
@@ -64,46 +53,32 @@ constexpr uint64_t FreeListTest<T>::Size;
 
 // Define types to test with
 
-struct complex_data {
-  double d;
-  float f;
-  uint32_t i;
-  int32_t i2;
-};
-
-template <>
-struct TypeTraits<complex_data> {
-  static const complex_data zero;
-  static void inc(complex_data& t) {
-    t.d += 1.0;
-    t.f += 1.0F;
-    ++t.i;
-  }
-};
-const complex_data TypeTraits<complex_data>::zero{0.0, 0.0F, 0};
-
-bool operator==(complex_data const& l, complex_data const& r) {
-  if (l.d != r.d) return false;
-  if (l.f != r.f) return false;
-  if (l.i != r.i) return false;
-  return true;
-}
-
-template <>
-template <typename T>
-struct TypeTraits<std::vector<T>> {
-  static const std::vector<T> zero;
-  static void inc(std::vector<T>& t) { t.push_back(T(t.size())); }
-};
-template <typename T>
-const std::vector<T> TypeTraits<std::vector<T>>::zero{};
-
-// Define test types
-
+// Define test types for edge cases
 using FreeListTestTypes = ::testing::Types<
-    FreeListType<int8_t, 16>, FreeListType<int8_t, 300>,
-    FreeListType<int8_t, 70000>, FreeListType<double, 16>,
-    FreeListType<double, 800>,
+    FreeListType<int8_t, 8>,         // Minimum size for 1-byte type
+    FreeListType<int16_t, 8>,        // Minimum size for 2-byte type
+    FreeListType<int32_t, 8>,        // Minimum size for 4-byte type
+    FreeListType<int64_t, 16>,       // Minimum size for 8-byte type
+    FreeListType<float, 8>,          // Minimum size for float
+    FreeListType<double, 16>,        // Minimum size for double
+    FreeListType<float, 256>,        // Largest freelist with 1-byte indexes
+    FreeListType<double, 264>,       // Smallest freelist with 2-byte indexes
+    FreeListType<double, 131072>,    // Largest freelist with 2-byte indexes
+    FreeListType<double, 131088>,    // Smallest freelist with 4-byte indexes
+    FreeListType<double, 16777216>,  // 16MB freelist with 4-byte indexes
+    // Note: the largest FreeList possible with 4-byte indexes is 16GB.
+    // The smallest FreeList requiring 8-byte indexes is larger than 16GB, so
+    // it is not tested.
+
+    // Test abnormal-sized data structures, with different index sizes
+    FreeListType<AbnormalSize<3>, 512>, FreeListType<AbnormalSize<3>, 131088>,
+    FreeListType<AbnormalSize<7>, 16>, FreeListType<AbnormalSize<7>, 16000>,
+    FreeListType<AbnormalSize<7>, 131088>, FreeListType<AbnormalSize<15>, 32>,
+    FreeListType<AbnormalSize<15>, 32000>,
+    FreeListType<AbnormalSize<15>, 131088>,
+
+    // Test complex data structures
+    FreeListType<std::string, sizeof(std::string) * 100>,
     FreeListType<complex_data, sizeof(complex_data) * 100>,
     FreeListType<std::vector<int>, sizeof(std::vector<int>) * 100>>;
 
@@ -143,11 +118,12 @@ TYPED_TEST(FreeListTest, full) {
 TYPED_TEST(FreeListTest, size) {
   std::vector<typename TestFixture::T*> indexList;
 
-  for (int i = 0; i < this->fl.capacity(); ++i) {
+  const int numItems = std::min(10000, int(this->fl.capacity()));
+  for (int i = 0; i < numItems; ++i) {
     EXPECT_EQ(i, this->fl.size());
     indexList.push_back(this->fl.alloc());
   }
-  EXPECT_EQ(this->fl.capacity(), this->fl.size());
+  EXPECT_EQ(numItems, this->fl.size());
 }
 
 TYPED_TEST(FreeListTest, capacity) {
@@ -164,10 +140,7 @@ TYPED_TEST(FreeListTest, alloc) {
     indexList.push_back(this->fl.alloc());
 
     // Check the pointers are within range
-    EXPECT_GE(reinterpret_cast<uint8_t const*>(indexList.back()),
-              reinterpret_cast<uint8_t const*>(&this->fl));
-    EXPECT_LT(reinterpret_cast<uint8_t const*>(indexList.back()),
-              reinterpret_cast<uint8_t const*>(&this->fl) + TestFixture::Size);
+    TestFixture::checkPointer(indexList.back());
   }
   EXPECT_THROW(indexList.push_back(this->fl.alloc()), std::bad_alloc);
 
@@ -175,20 +148,21 @@ TYPED_TEST(FreeListTest, alloc) {
   indexList.pop_back();
 
   indexList.push_back(this->fl.alloc());
-  ASSERT_NE(nullptr, indexList.back());
+  TestFixture::checkPointer(indexList.back());
 }
 
 TYPED_TEST(FreeListTest, data_integrity) {
   std::vector<typename TestFixture::T*> indexList;
   std::vector<typename TestFixture::T> valueList;
 
-  for (int i = 0; i < this->fl.capacity(); ++i) {
+  const int numItems = std::min(10000, int(this->fl.capacity()));
+  for (int i = 0; i < numItems; ++i) {
     indexList.push_back(this->fl.alloc());
     valueList.push_back(this->value_store.next());
     *indexList.back() = valueList.back();
   }
 
-  for (int i = 0; i < this->fl.capacity(); ++i) {
+  for (int i = 0; i < numItems; ++i) {
     EXPECT_EQ(valueList[i], *indexList[i]);
   }
 }
@@ -248,17 +222,14 @@ TYPED_TEST(FreeListTest, make_unique) {
     indexList.push_back(this->fl.make_unique());
 
     // Check the pointers are within range
-    EXPECT_GE(reinterpret_cast<uint8_t const*>(indexList.back().get()),
-              reinterpret_cast<uint8_t const*>(&this->fl));
-    EXPECT_LT(reinterpret_cast<uint8_t const*>(indexList.back().get()),
-              reinterpret_cast<uint8_t const*>(&this->fl) + TestFixture::Size);
+    TestFixture::checkPointer(indexList.back().get());
   }
   EXPECT_THROW(indexList.push_back(this->fl.make_unique()), std::bad_alloc);
 
   indexList.pop_back();
 
   indexList.push_back(this->fl.make_unique());
-  ASSERT_NE(nullptr, indexList.back().get());
+  TestFixture::checkPointer(indexList.back().get());
 }
 
 TYPED_TEST(FreeListTest, make_shared) {
@@ -268,15 +239,27 @@ TYPED_TEST(FreeListTest, make_shared) {
     indexList.push_back(this->fl.make_shared());
 
     // Check the pointers are within range
-    EXPECT_GE(reinterpret_cast<uint8_t const*>(indexList.back().get()),
-              reinterpret_cast<uint8_t const*>(&this->fl));
-    EXPECT_LT(reinterpret_cast<uint8_t const*>(indexList.back().get()),
-              reinterpret_cast<uint8_t const*>(&this->fl) + TestFixture::Size);
+    TestFixture::checkPointer(indexList.back().get());
   }
   EXPECT_THROW(indexList.push_back(this->fl.make_shared()), std::bad_alloc);
 
   indexList.pop_back();
 
   indexList.push_back(this->fl.make_shared());
-  ASSERT_NE(nullptr, indexList.back().get());
+  TestFixture::checkPointer(indexList.back().get());
+}
+
+TYPED_TEST(FreeListTest, vector_allocator) {
+  std::vector<typename TestFixture::T,
+              typename TestFixture::this_FreeList::Allocator>
+      vec(this->fl.allocator());
+
+  EXPECT_EQ(0, this->fl.size());
+
+  vec.push_back(this->value_store.next());
+  EXPECT_EQ(1, this->fl.size());
+
+  vec.pop_back();
+  vec.shrink_to_fit();
+  EXPECT_EQ(0, this->fl.size());
 }

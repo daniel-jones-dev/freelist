@@ -8,7 +8,7 @@ project(freelist)
 set(CMAKE_CXX_STANDARD 11)
 
 add_library(freelist INTERFACE)
-#target_sources(freelist INTERFACE include/freelist/freelist.h)
 target_include_directories(freelist INTERFACE include)
+target_link_libraries(freelist INTERFACE atomic)
 
 add_subdirectory(tests)

@@ -15,7 +15,12 @@
 #include <type_traits>
 #include <utility>
 
+#include <iostream>
+
 namespace freelist {
+
+template <typename T, uint64_t Size>
+class FreeListAllocator;
 
 /**
  * FreeList allows random allocation and deletion of items of a fixed type,
@@ -35,12 +40,13 @@ class FreeList {
  public:
   static_assert(!std::is_abstract<T>::value,
                 "Stored data type must not be abstract");
-  static_assert(Size % sizeof(T) == 0, "Size must be a multiple of sizeof(T)");
 
   /**
    * Type that is stored in each active element.
    */
   using value_type = T;
+
+  using this_type = FreeList<T, Size>;
 
   /**
    * Type used for storing indexes. Set to an unsigned integer large enough to
@@ -54,6 +60,8 @@ class FreeList {
                                         std::numeric_limits<uint32_t>::max(),
                                     uint32_t, uint64_t>::type>::type>::type;
 
+  using size_type = uint64_t;
+
   /**
    * Type of function used to free items.
    */
@@ -63,6 +71,11 @@ class FreeList {
    * Type of std::unique_ptr returned by make_unique.
    */
   using UniquePtr = std::unique_ptr<T, Deleter>;
+
+  /**
+   * Type of an allocator created from this FreeList.
+   */
+  using Allocator = FreeListAllocator<T, Size>;
 
   /**
    * Construct an empty FreeList.
@@ -180,6 +193,13 @@ class FreeList {
    * @param item Pointer of item to find.
    * @return Index of the specified item.
    */
+  inline index_type index(T* item);
+
+  /**
+   * Get the index of the specified item.
+   * @param item Pointer of item to find.
+   * @return Index of the specified item.
+   */
   inline index_type index(T const* item) const;
 
   /**
@@ -204,59 +224,77 @@ class FreeList {
     return std::bind(&FreeList::free, this, std::placeholders::_1);
   }
 
+  inline Allocator allocator() { return Allocator(*this); }
+
  private:
-  struct TaggedIndex {
-    explicit TaggedIndex(index_type index = 0, uint64_t tag = 0)
-        : index(index), tag(tag) {}
-
-    TaggedIndex(TaggedIndex const& other) = default;
-    ~TaggedIndex() = default;
-
-    index_type index;
-    index_type tag;
-  };
-
-  union _element {
-    // Empty constructor and destructor - deletion will be handled manually
-    _element() {}
-    ~_element() {}
+  union Element {
+    // Define empty constructor and destructor - defaults are ill-formed
+    Element() {}
+    ~Element() {}
 
     T data;
     index_type index;
   };
 
-  struct _overhead {
-    std::atomic<index_type> next;
-    std::atomic<index_type> count;
-    std::atomic<TaggedIndex> free;
+  struct ControlFlags {
+    ControlFlags() = default;
+    ControlFlags(ControlFlags const& other) = default;
+    ~ControlFlags() = default;
+
+    index_type next{0};
+    index_type count{0};
+    index_type free{0};
+    index_type tag{0};
   };
 
-  static constexpr uint64_t kElementSize = sizeof(_element);
+  static constexpr uint64_t kElementSize = sizeof(Element);
 
   static constexpr index_type kIndexCount = Size / kElementSize;
 
-  static constexpr index_type kElementOverheadCount =
-      (sizeof(_overhead) + kElementSize - 1) / kElementSize;
-
-  static_assert(kIndexCount > kElementOverheadCount,
-                "FreeList is too small to contain elements");
-
   union _data {
-    // Empty constructor and destructor - deletion will be handled manually
+    // Define empty constructor and destructor - defaults are ill-formed
     _data() {}
     ~_data() {}
 
-    _element elements[kIndexCount];
-    _overhead overhead;
+    std::atomic<ControlFlags> control;
+    Element elements[kIndexCount];
   } data;
+
+  static constexpr index_type kElementOverheadCount =
+      (sizeof(data.control) + kElementSize - 1) / kElementSize;
+
+  static_assert(alignof(data.control) < sizeof(T) ||
+                    Size % alignof(data.control) == 0 ||
+                    sizeof(index_type) != 1,
+                "Size must be a multiple of 4 (for Size <= 256)");
+  static_assert(alignof(data.control) < sizeof(T) ||
+                    Size % alignof(data.control) == 0 ||
+                    sizeof(index_type) != 2,
+                "Size must be a multiple of 8 (for Size <= 131072)");
+  static_assert(alignof(data.control) < sizeof(T) ||
+                    Size % alignof(data.control) == 0 ||
+                    sizeof(index_type) != 4,
+                "Size must be a multiple of 16 (for Size <= 17179869184)");
+  static_assert(alignof(data.control) < sizeof(T) ||
+                    Size % alignof(data.control) == 0 ||
+                    sizeof(index_type) != 8,
+                "Size must be a multiple of 32 (for Size > 17179869184)");
+
+  static_assert(alignof(data.control) >= sizeof(T) || Size % alignof(T) == 0,
+                "Size must be a multiple of alignof(T)");
+
+  static_assert(kIndexCount > kElementOverheadCount,
+                "FreeList is too small to contain an element");
 };
 
 template <typename T, uint64_t Size>
 FreeList<T, Size>::FreeList() {
-  TaggedIndex ti(0, 0);
-  data.overhead.free.store(ti);
-  data.overhead.count = 0;
-  data.overhead.next = kElementOverheadCount;
+  ControlFlags flags;
+  flags.next = kElementOverheadCount;
+  flags.count = 0;
+  flags.free = 0;
+  flags.tag = 0;
+  data.control.store(flags);
 }
 
 template <typename T, uint64_t Size>
@@ -266,18 +304,18 @@ FreeList<T, Size>::~FreeList() noexcept {
 
 template <typename T, uint64_t Size>
 bool FreeList<T, Size>::empty() const noexcept {
-  return data.overhead.count.load() == 0;
+  return data.control.load().count == 0;
 }
 
 template <typename T, uint64_t Size>
 bool FreeList<T, Size>::full() const noexcept {
-  return data.overhead.count.load() >= max_size();
+  return data.control.load().count >= max_size();
 }
 
 template <typename T, uint64_t Size>
 typename FreeList<T, Size>::index_type FreeList<T, Size>::size() const
     noexcept {
-  return data.overhead.count.load();
+  return data.control.load().count;
 }
 
 template <typename T, uint64_t Size>
@@ -295,24 +333,25 @@ void FreeList<T, Size>::clear() noexcept {
     itemIsFree[i] = false;
   }
 
-  TaggedIndex curr_free = data.overhead.free.load(std::memory_order_relaxed);
-  while (curr_free.index != 0) {
-    itemIsFree[curr_free.index] = true;
-    curr_free.index = data.elements[curr_free.index].index;
+  ControlFlags currFlags = data.control.load(std::memory_order_relaxed);
+  while (currFlags.free != 0) {
+    itemIsFree[currFlags.free] = true;
+    currFlags.free = data.elements[currFlags.free].index;
   }
 
   // Delete all non-freed items up to next
-  const index_type next = data.overhead.next.load(std::memory_order_relaxed);
-  for (index_type i = kElementOverheadCount; i < next; ++i) {
+  for (index_type i = kElementOverheadCount; i < currFlags.next; ++i) {
     if (!itemIsFree[i]) {
       // Call destructor
       data.elements[i].data.~T();
     }
   }
 
-  data.overhead.free = TaggedIndex();
-  data.overhead.count = 0;
-  data.overhead.next = kElementOverheadCount;
+  currFlags.free = 0;
+  currFlags.tag = 0;
+  currFlags.count = 0;
+  currFlags.next = kElementOverheadCount;
+  data.control.store(currFlags);
 }
 
 template <typename T, uint64_t Size>
@@ -350,34 +389,38 @@ template <typename T, uint64_t Size>
 typename FreeList<T, Size>::index_type
 FreeList<T, Size>::push_index() noexcept {
   // Read the free index
-  TaggedIndex freeIndex = data.overhead.free.load();
+  ControlFlags currFlags = data.control.load();
 
-  // While free is not zero, then there is a previously-freed item
-  while (freeIndex.index) {
-    TaggedIndex nextFreeIndex = freeIndex;
-    // Read the index stored at that element
-    nextFreeIndex.index = *reinterpret_cast<index_type*>(get(freeIndex.index));
-    // Increment the tag to avoid the ABA problem
-    nextFreeIndex.tag++;
+  do {
+    ControlFlags newFlags = currFlags;
+    if (currFlags.free) {
+      // While free is not zero, then there is a previously-freed item
 
-    if (data.overhead.free.compare_exchange_strong(freeIndex, nextFreeIndex)) {
-      // Return the previously freed item
-      ++data.overhead.count;
-      return freeIndex.index;
+      // Read the index stored at that element
+      newFlags.free = *reinterpret_cast<index_type*>(get(currFlags.free));
+      // Increment the tag to avoid the ABA problem
+      ++newFlags.tag;
+      // Creating a new item
+      ++newFlags.count;
+
+      if (data.control.compare_exchange_strong(currFlags, newFlags)) {
+        // Return the previously freed item
+        return currFlags.free;
+      }
+    } else if (currFlags.next < kIndexCount) {
+      // Increment the next
+      ++newFlags.next;
+      // Creating a new item
+      ++newFlags.count;
+
+      if (data.control.compare_exchange_strong(currFlags, newFlags)) {
+        // Return the pre-increment next index
+        return currFlags.next;
+      }
+    } else {
+      return 0;
     }
-  }
-  // No previously-freed items
-
-  // Atomically get the next index, then increment it
-  const index_type next = data.overhead.next++;
-  if (next >= kIndexCount) {
-    // No next items
-    --data.overhead.next;  // Undo the increment
-    return 0;
-  }
-
-  ++data.overhead.count;
-  return next;
+  } while (1);
 }
 
 template <typename T, uint64_t Size>
@@ -401,15 +444,15 @@ void FreeList<T, Size>::pop_index(const index_type index) noexcept {
   // - include a tag increment to avoid ABA problem
   index_type& freedElement = data.elements[index].index;
 
-  TaggedIndex freeIndex = data.overhead.free.load();
-  TaggedIndex newFreeIndex{index, 0};
+  ControlFlags currFlags = data.control.load();
+  ControlFlags newFlags;
   do {
-    freedElement = freeIndex.index;
-    newFreeIndex.tag = freeIndex.tag + 1;
-  } while (
-      !data.overhead.free.compare_exchange_strong(freeIndex, newFreeIndex));
-
-  --data.overhead.count;
+    newFlags = currFlags;
+    freedElement = currFlags.free;
+    newFlags.free = index;
+    ++newFlags.tag;
+    --newFlags.count;
+  } while (!data.control.compare_exchange_strong(currFlags, newFlags));
 }
 
 template <typename T, uint64_t Size>
@@ -427,20 +470,64 @@ T* FreeList<T, Size>::get(index_type index) {
 }
 
 template <typename T, uint64_t Size>
-typename FreeList<T, Size>::index_type FreeList<T, Size>::index(
-    T const* item) const {
+typename FreeList<T, Size>::index_type FreeList<T, Size>::index(T* item) {
   assert(item);
-  assert(reinterpret_cast<void const*>(item) >=
-         reinterpret_cast<void const*>(this));
-  assert((reinterpret_cast<uint8_t const*>(item) -
-          reinterpret_cast<uint8_t const*>(this)) %
+  assert(reinterpret_cast<void*>(item) >= reinterpret_cast<void*>(this));
+  assert((reinterpret_cast<uint8_t*>(item) - reinterpret_cast<uint8_t*>(this)) %
              kElementSize ==
          0);
-  index_type index = reinterpret_cast<_element const*>(item) - data.elements;
+  index_type index = reinterpret_cast<Element*>(item) - data.elements;
 
   assert(index < kIndexCount);
   return index;
 }
+
+template <typename T, uint64_t Size>
+typename FreeList<T, Size>::index_type FreeList<T, Size>::index(
+    T const* item) const {
+  return const_cast<this_type*>(this)->index(const_cast<T*>(item));
+}
+
+template <typename T, uint64_t Size>
+class FreeListAllocator {
+ public:
+  using FreeListType = FreeList<T, Size>;
+  using value_type = T;
+  using pointer = T*;
+  using const_pointer = const T*;
+  using void_pointer = void*;
+  using size_type = typename FreeListType::size_type;
+  using difference_type = std::ptrdiff_t;
+
+  template <typename U>
+  struct rebind {
+    using other = FreeListAllocator<U, Size>;
+  };
+
+  explicit FreeListAllocator(FreeListType& parent) : parent(parent) {}
+
+  FreeListAllocator(FreeListAllocator const&) = default;
+  ~FreeListAllocator() = default;
+
+  T* allocate(std::size_t n) {
+    if (n != 1) {
+      throw std::bad_alloc();
+    }
+    typename FreeListType::index_type index = parent.push_index();
+    if (index) {
+      return parent.get(index);
+    } else {
+      throw std::bad_alloc();
+    }
+  }
+
+  void deallocate(T* p, std::size_t) noexcept {
+    parent.pop_index(parent.index(p));
+  }
+
+ private:
+  FreeListType& parent;
+};
 
 }  // namespace freelist
 

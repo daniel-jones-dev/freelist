@@ -9,7 +9,7 @@ enable_testing()
 add_executable(test_freelist
   freelist_test.cc
   freelist_destructor_test.cc
-  freelist_thread_test.cc)
+  freelist_thread_test.cc test_values.h)
 
 target_link_libraries(test_freelist freelist gtest gtest_main pthread)
 
