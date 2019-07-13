@@ -91,6 +91,30 @@ TEST_F(FreeListDestructorTest, early_clear) {
   auto p6 = fl.push();
 
   fl.clear();
-
 }
 
+TEST_F(FreeListDestructorTest, make_unique) {
+  freelist::FreeList<InstanceCounter, 100> fl;
+  {
+    auto p1 = fl.make_unique();
+    fl.make_unique();
+    auto p3 = fl.make_unique();
+    p1.reset();
+    fl.make_unique();
+    fl.make_unique();
+    auto p6 = fl.make_unique();
+  }
+}
+
+TEST_F(FreeListDestructorTest, make_shared) {
+  freelist::FreeList<InstanceCounter, 100> fl;
+  {
+    auto p1 = fl.make_shared();
+    fl.make_shared();
+    auto p3 = fl.make_shared();
+    p1.reset();
+    fl.make_shared();
+    fl.make_shared();
+    auto p6 = fl.make_shared();
+  }
+}

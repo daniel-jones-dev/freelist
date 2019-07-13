@@ -10,11 +10,11 @@
 
 #include <gtest/gtest.h>
 
-// TODO Thread-safety test
+// TODO(dj) Thread-safety test
 
-// TODO Check if virtual classes without derived data members can be stored
+// TODO(dj) Check if virtual classes without derived data members can be stored
 
-// TODO alloc() with args
+// TODO(dj) alloc() with args
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -132,7 +132,6 @@ TYPED_TEST(FreeListTest, full) {
   for (int i = 0; i < this->fl.capacity(); ++i) {
     EXPECT_FALSE(this->fl.full());
     indexList.push_back(this->fl.alloc());
-    ASSERT_NE(nullptr, indexList.back());
   }
   EXPECT_TRUE(this->fl.full());
 
@@ -147,7 +146,6 @@ TYPED_TEST(FreeListTest, size) {
   for (int i = 0; i < this->fl.capacity(); ++i) {
     EXPECT_EQ(i, this->fl.size());
     indexList.push_back(this->fl.alloc());
-    ASSERT_NE(nullptr, indexList.back());
   }
   EXPECT_EQ(this->fl.capacity(), this->fl.size());
 }
@@ -159,7 +157,7 @@ TYPED_TEST(FreeListTest, capacity) {
             this->fl.capacity());
 }
 
-TYPED_TEST(FreeListTest, push) {
+TYPED_TEST(FreeListTest, alloc) {
   std::vector<typename TestFixture::T*> indexList;
 
   for (int i = 0; i < this->fl.capacity(); ++i) {
@@ -172,9 +170,7 @@ TYPED_TEST(FreeListTest, push) {
     EXPECT_LT(reinterpret_cast<uint8_t const*>(indexList.back()),
               reinterpret_cast<uint8_t const*>(&this->fl) + TestFixture::Size);
   }
-  indexList.push_back(this->fl.alloc());
-  EXPECT_EQ(nullptr, indexList.back());
-  indexList.pop_back();
+  EXPECT_THROW(indexList.push_back(this->fl.alloc()), std::bad_alloc);
 
   this->fl.free(indexList.back());
   indexList.pop_back();
@@ -198,7 +194,7 @@ TYPED_TEST(FreeListTest, data_integrity) {
   }
 }
 
-TYPED_TEST(FreeListTest, push_and_pop) {
+TYPED_TEST(FreeListTest, alloc_and_free) {
   std::vector<typename TestFixture::T> valueList;
 
   // TODO change test to cover lists with smaller capacity
@@ -244,4 +240,44 @@ TYPED_TEST(FreeListTest, push_and_pop) {
     this->fl.free(d2);
     this->fl.free(d3);
   }
+}
+
+TYPED_TEST(FreeListTest, make_unique) {
+  std::vector<typename TestFixture::this_FreeList::UniquePtr> indexList;
+
+  for (int i = 0; i < this->fl.capacity(); ++i) {
+    indexList.push_back(this->fl.make_unique());
+
+    // Check the pointers are within range
+    EXPECT_GE(reinterpret_cast<uint8_t const*>(indexList.back().get()),
+              reinterpret_cast<uint8_t const*>(&this->fl));
+    EXPECT_LT(reinterpret_cast<uint8_t const*>(indexList.back().get()),
+              reinterpret_cast<uint8_t const*>(&this->fl) + TestFixture::Size);
+  }
+  EXPECT_THROW(indexList.push_back(this->fl.make_unique()), std::bad_alloc);
+
+  indexList.pop_back();
+
+  indexList.push_back(this->fl.make_unique());
+  ASSERT_NE(nullptr, indexList.back().get());
+}
+
+TYPED_TEST(FreeListTest, make_shared) {
+  std::vector<std::shared_ptr<typename TestFixture::T>> indexList;
+
+  for (int i = 0; i < this->fl.capacity(); ++i) {
+    indexList.push_back(this->fl.make_shared());
+
+    // Check the pointers are within range
+    EXPECT_GE(reinterpret_cast<uint8_t const*>(indexList.back().get()),
+              reinterpret_cast<uint8_t const*>(&this->fl));
+    EXPECT_LT(reinterpret_cast<uint8_t const*>(indexList.back().get()),
+              reinterpret_cast<uint8_t const*>(&this->fl) + TestFixture::Size);
+  }
+  EXPECT_THROW(indexList.push_back(this->fl.make_shared()), std::bad_alloc);
+
+  indexList.pop_back();
+
+  indexList.push_back(this->fl.make_shared());
+  ASSERT_NE(nullptr, indexList.back().get());
 }
