@@ -13,6 +13,7 @@
 #include <limits>
 #include <memory>
 #include <type_traits>
+#include <utility>
 
 namespace freelist {
 
@@ -204,6 +205,17 @@ class FreeList {
   }
 
  private:
+  struct TaggedIndex {
+    explicit TaggedIndex(index_type index = 0, uint64_t tag = 0)
+        : index(index), tag(tag) {}
+
+    TaggedIndex(TaggedIndex const& other) = default;
+    ~TaggedIndex() = default;
+
+    index_type index;
+    index_type tag;
+  };
+
   union _element {
     // Empty constructor and destructor - deletion will be handled manually
     _element() {}
@@ -215,8 +227,8 @@ class FreeList {
 
   struct _overhead {
     std::atomic<index_type> next;
-    std::atomic<index_type> free;
     std::atomic<index_type> count;
+    std::atomic<TaggedIndex> free;
   };
 
   static constexpr uint64_t kElementSize = sizeof(_element);
@@ -241,7 +253,8 @@ class FreeList {
 
 template <typename T, uint64_t Size>
 FreeList<T, Size>::FreeList() {
-  data.overhead.free = 0;
+  TaggedIndex ti(0, 0);
+  data.overhead.free.store(ti);
   data.overhead.count = 0;
   data.overhead.next = kElementOverheadCount;
 }
@@ -282,10 +295,10 @@ void FreeList<T, Size>::clear() noexcept {
     itemIsFree[i] = false;
   }
 
-  index_type curr_free = data.overhead.free.load(std::memory_order_relaxed);
-  while (curr_free != 0) {
-    itemIsFree[curr_free] = true;
-    curr_free = data.elements[curr_free].index;
+  TaggedIndex curr_free = data.overhead.free.load(std::memory_order_relaxed);
+  while (curr_free.index != 0) {
+    itemIsFree[curr_free.index] = true;
+    curr_free.index = data.elements[curr_free.index].index;
   }
 
   // Delete all non-freed items up to next
@@ -297,7 +310,7 @@ void FreeList<T, Size>::clear() noexcept {
     }
   }
 
-  data.overhead.free = 0;
+  data.overhead.free = TaggedIndex();
   data.overhead.count = 0;
   data.overhead.next = kElementOverheadCount;
 }
@@ -337,20 +350,20 @@ template <typename T, uint64_t Size>
 typename FreeList<T, Size>::index_type
 FreeList<T, Size>::push_index() noexcept {
   // Read the free index
-  index_type freeIndex = data.overhead.free.load(std::memory_order_acquire);
+  TaggedIndex freeIndex = data.overhead.free.load();
 
   // While free is not zero, then there is a previously-freed item
-  while (freeIndex) {
+  while (freeIndex.index) {
+    TaggedIndex nextFreeIndex = freeIndex;
     // Read the index stored at that element
-    index_type nextFreeIndex = *reinterpret_cast<index_type*>(get(freeIndex));
+    nextFreeIndex.index = *reinterpret_cast<index_type*>(get(freeIndex.index));
+    // Increment the tag to avoid the ABA problem
+    nextFreeIndex.tag++;
 
-    // TODO(dj): Suffers from the ABA problem
-    if (data.overhead.free.compare_exchange_strong(freeIndex, nextFreeIndex,
-                                                   std::memory_order_release,
-                                                   std::memory_order_acquire)) {
+    if (data.overhead.free.compare_exchange_strong(freeIndex, nextFreeIndex)) {
       // Return the previously freed item
       ++data.overhead.count;
-      return freeIndex;
+      return freeIndex.index;
     }
   }
   // No previously-freed items
@@ -385,13 +398,16 @@ void FreeList<T, Size>::pop_index(const index_type index) noexcept {
   // - read the current value of the free index
   // - set the newly-freed-element to contain that free index
   // - change the free index to point to the newly-freed-element
+  // - include a tag increment to avoid ABA problem
   index_type& freedElement = data.elements[index].index;
 
-  index_type freeIndex = data.overhead.free.load();
+  TaggedIndex freeIndex = data.overhead.free.load();
+  TaggedIndex newFreeIndex{index, 0};
   do {
-    freedElement = freeIndex;
-  } while (data.overhead.free.compare_exchange_strong(
-      freeIndex, index));
+    freedElement = freeIndex.index;
+    newFreeIndex.tag = freeIndex.tag + 1;
+  } while (
+      !data.overhead.free.compare_exchange_strong(freeIndex, newFreeIndex));
 
   --data.overhead.count;
 }
