@@ -34,8 +34,6 @@
 #include <type_traits>
 #include <utility>
 
-#include <iostream>
-
 namespace freelist {
 
 template <typename T, uint64_t Size>
